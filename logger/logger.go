@@ -39,6 +39,11 @@ func Info(message string) {
 	}
 }
 
+// Warn logs a message at warn level.
+func Warn(message string) {
+	logger.Warn().Caller(1).Msg(message)
+}
+
 // Error logs a message at error level.
 func Error(message string) {
 	logger.Error().Caller(1).Msg(message)
@@ -52,6 +57,11 @@ func Debug(message string) {
 // Infof logs a message at info level with format.
 func Infof(format string, args ...interface{}) {
 	logger.Info().Msgf(format, args...)
+}
+
+// Warnf logs a message at warn level with format.
+func Warnf(format string, args ...interface{}) {
+	logger.Warn().Caller(1).Msgf(format, args...)
 }
 
 // Errorf logs a message at error level with format.
@@ -75,6 +85,11 @@ func InfoCtx(ctx context.Context, message string) {
 	}
 }
 
+// WarnCtx logs a message at warn level with context.
+func WarnCtx(ctx context.Context, message string) {
+	logger.Warn().Interface("request_id", ctx.Value(config.RequestIDKey)).Caller(1).Msg(fmt.Sprintf("[%s]%s", ctx.Value(config.RequestIDKey), message))
+}
+
 // ErrorCtx logs a message at error level with context.
 func ErrorCtx(ctx context.Context, message string) {
 	logger.Error().Interface("request_id", ctx.Value(config.RequestIDKey)).Caller(1).Msg(fmt.Sprintf("[%s]%s", ctx.Value(config.RequestIDKey), message))
@@ -88,6 +103,11 @@ func DebugCtx(ctx context.Context, message string) {
 // InfofCtx logs a message at info level with format with context.
 func InfofCtx(ctx context.Context, format string, args ...interface{}) {
 	logger.Info().Interface("request_id", ctx.Value(config.RequestIDKey)).Msgf(format, args...)
+}
+
+// WarnfCtx logs a message at warn level with format with context.
+func WarnfCtx(ctx context.Context, format string, args ...interface{}) {
+	logger.Warn().Interface("request_id", ctx.Value(config.RequestIDKey)).Caller(1).Msgf(format, args...)
 }
 
 // ErrorfCtx logs a message at error level with format with context.

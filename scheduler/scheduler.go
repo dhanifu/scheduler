@@ -7,21 +7,27 @@ import (
 	"go-scheduler/internal/repository"
 	"go-scheduler/internal/service"
 	"go-scheduler/model"
+	"log"
 	"strings"
 	"time"
 
-	"github.com/robfig/cron/v3"
+	"github.com/go-co-op/gocron/v2"
 )
 
 type Scheduler struct {
 	config      *config.Config
-	scheduler   *cron.Cron
+	scheduler   gocron.Scheduler
 	userService service.UserServiceInterface
 }
 
-func NewScheduler(config *config.Config, scheduler *cron.Cron) *Scheduler {
+func NewScheduler(config *config.Config) *Scheduler {
 	pgsql := repository.NewPostgreConnection(config)
 	userRepo := repository.NewUserRepository(pgsql)
+
+	scheduler, err := gocron.NewScheduler(gocron.WithLocation(time.Local))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	return &Scheduler{
 		config:      config,
@@ -31,8 +37,8 @@ func NewScheduler(config *config.Config, scheduler *cron.Cron) *Scheduler {
 }
 
 func (s *Scheduler) Start() {
-	// every day at 3:14 AM
-	s.scheduler.AddFunc("14 3 * * *", s.HXMSGetUsers)
+	// every 40 seconds
+	_, _ = s.scheduler.NewJob(gocron.DurationJob(40*time.Second), gocron.NewTask(s.HXMSGetUsers))
 
 	s.scheduler.Start()
 }
@@ -63,7 +69,7 @@ func (s *Scheduler) HXMSGetUsers() {
 
 	if len(users) > 0 {
 		batchSize := 500 // 500 row per batch
-		workerCount := 3 // 3 worker paralel
+		workerCount := 5 // 5 worker paralel
 		maxRetries := 3  // Retry maksimal 3 kali jika error
 
 		startTime := time.Now()

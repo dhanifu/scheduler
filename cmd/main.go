@@ -8,8 +8,6 @@ import (
 	"log"
 	"os"
 	"strings"
-
-	"github.com/robfig/cron/v3"
 )
 
 func main() {
@@ -34,10 +32,8 @@ func main() {
 	_ = logger.InitZerolog(conf)
 
 	// init cron
-	cron := cron.New()
-
 	logger.Info("Starting scheduler...")
-	scheduler := scheduler.NewScheduler(conf, cron)
+	scheduler := scheduler.NewScheduler(conf)
 	scheduler.Start()
 
 	select {}

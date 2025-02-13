@@ -8,6 +8,8 @@ import (
 	"go-scheduler/logger"
 	"go-scheduler/model"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 type UserServiceInterface interface {
@@ -36,31 +38,67 @@ func (u *userService) GetUsers(ctx context.Context) ([]*entity.GetUser, error) {
 	return users, nil
 }
 
-func (u *userService) workerBatchUpdateUser(ctx context.Context, jobs <-chan []*model.UpdateUserRequest, wg *sync.WaitGroup, maxRetries int) {
-	defer wg.Done()
-	totalUpdated := 0
+func (u *userService) workerBatchUpdateUser(ctx context.Context, workerID int, jobs <-chan []*model.UpdateUserRequest, maxRetries int, batchCounter *int32, resultChan chan<- int64) {
+	var totalUpdated int64 = 0
+
+	logger.InfofCtx(ctx, "[Worker %d] 🚀 Start", workerID)
+
 	for batch := range jobs {
-		err := u.userRepository.BatchUpdateUser(ctx, batch, maxRetries)
+		batchID := atomic.AddInt32(batchCounter, 1)
+		startTime := time.Now()
+
+		// logger.InfofCtx(ctx, "[Worker %d] 🚀 Processing batch %d with %d users", workerID, batchID, len(batch))
+
+		// Attempt batch update with retries
+		var err error
+		for retry := 0; retry < maxRetries; retry++ {
+			// Forced error for testing retry
+			// if retry > 0 {
+			// 	err = u.userRepository.BatchUpdateUser(ctx, batch, workerID, int(batchID))
+			// 	if err == nil {
+			// 		break // Jika berhasil, keluar dari loop retry
+			// 	}
+			// } else {
+			// 	err = fmt.Errorf("forced error on retry %d", retry+1)
+			// }
+			err = u.userRepository.BatchUpdateUser(ctx, batch, workerID, int(batchID))
+			if err == nil {
+				break // Jika berhasil, keluar dari loop retry
+			}
+			logger.WarnfCtx(ctx, "[Worker %d] Retry %d for batch %d failed: %v", workerID, retry+1, batchID, err)
+			time.Sleep(time.Second) // Delay antara retries
+		}
+
+		duration := time.Since(startTime)
+
 		if err != nil {
-			logger.ErrorfCtx(ctx, "Batch update failed: %v", err)
+			logger.ErrorfCtx(ctx, "[Worker %d] ❌ Batch %d failed after %v", workerID, batchID, duration)
+			logger.ErrorfCtx(ctx, "[Worker %d] ❌ Error: %v", workerID, err)
 		} else {
-			countBatch := len(batch)
+			countBatch := int64(len(batch))
 			totalUpdated += countBatch
-			logger.InfofCtx(ctx, "Updated %d users", countBatch)
+			// logger.InfofCtx(ctx, "[Worker %d] ✅ Batch %d completed in %v (Updated %d users)", workerID, batchID, duration, countBatch)
 		}
 	}
 
-	logger.InfofCtx(ctx, "Total updated: %d", totalUpdated)
+	logger.InfofCtx(ctx, "[Worker %d] 🏁 Done (Total updated: %d)", workerID, totalUpdated)
+
+	resultChan <- totalUpdated
 }
 
 func (u *userService) BatchUpdateUser(ctx context.Context, users []*model.UpdateUserRequest, batchSize int, workerCount int, maxRetries int) {
 	jobs := make(chan []*model.UpdateUserRequest, len(users)/batchSize+1)
-	var wg sync.WaitGroup
+	resultChan := make(chan int64, workerCount)
+	var batchCounter int32
 
 	// Start worker goroutines
-	for i := 0; i < workerCount; i++ {
+	var wg sync.WaitGroup
+	for workerID := 0; workerID < workerCount; workerID++ {
 		wg.Add(1)
-		go u.workerBatchUpdateUser(ctx, jobs, &wg, maxRetries)
+		go func(workerID int) {
+			defer wg.Done()
+			u.workerBatchUpdateUser(ctx, workerID, jobs, maxRetries, &batchCounter, resultChan)
+		}(workerID + 1)
 	}
 
 	// Enqueue batches
@@ -75,4 +113,12 @@ func (u *userService) BatchUpdateUser(ctx context.Context, users []*model.Update
 
 	// Wait for all workers to complete
 	wg.Wait()
+
+	// count totalUpdate from all workers
+	totalUpdated := int64(0)
+	for i := 0; i < workerCount; i++ {
+		totalUpdated += <-resultChan
+	}
+
+	logger.InfofCtx(ctx, "Total updated: %d", totalUpdated)
 }

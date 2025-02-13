@@ -7,14 +7,13 @@ import (
 	"go-scheduler/logger"
 	"go-scheduler/model"
 	"strings"
-	"time"
 
 	"github.com/jmoiron/sqlx"
 )
 
 type UserRepositoryInterface interface {
 	GetUsers(ctx context.Context) ([]*entity.GetUser, error)
-	BatchUpdateUser(ctx context.Context, users []*model.UpdateUserRequest, maxRetries int) error
+	BatchUpdateUser(ctx context.Context, users []*model.UpdateUserRequest, workerID int, batchID int) error
 }
 
 type userRepository struct {
@@ -45,7 +44,7 @@ func (ur *userRepository) GetUsers(ctx context.Context) ([]*entity.GetUser, erro
 	return users, nil
 }
 
-func (ur *userRepository) BatchUpdateUser(ctx context.Context, users []*model.UpdateUserRequest, maxRetries int) error {
+func (ur *userRepository) BatchUpdateUser(ctx context.Context, users []*model.UpdateUserRequest, workerID int, batchID int) error {
 	if len(users) == 0 {
 		return nil
 	}
@@ -68,32 +67,19 @@ func (ur *userRepository) BatchUpdateUser(ctx context.Context, users []*model.Up
 	}
 	finalQuery := fmt.Sprintf(query, strings.Join(values, ","))
 
-	// 🔁 Retry jika Deadlock
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		tx, err := ur.db.BeginTxx(ctx, nil) // Gunakan transaksi
-		if err != nil {
-			logger.ErrorfCtx(ctx, "Failed to begin transaction: %v", err)
-			return err
-		}
-
-		_, err = tx.ExecContext(ctx, finalQuery, args...)
-		if err == nil {
-			_ = tx.Commit()
-			return nil // ✅ Sukses
-		}
-
-		_ = tx.Rollback() // Rollback transaksi jika error
-
-		// Deteksi deadlock
-		if strings.Contains(err.Error(), "deadlock detected") {
-			logger.ErrorfCtx(ctx, "Deadlock detected (attempt %d/%d), retrying...", attempt, maxRetries)
-			time.Sleep(time.Millisecond * 500 * time.Duration(attempt)) // Exponential backoff
-		} else {
-			logger.ErrorfCtx(ctx, "Batch update failed: %v", err)
-			return err
-		}
+	tx, err := ur.db.BeginTxx(ctx, nil)
+	if err != nil {
+		logger.ErrorfCtx(ctx, "[Worker %d] Failed to begin transaction: %v", workerID, err)
+		return err
 	}
 
-	logger.ErrorfCtx(ctx, "Batch update permanently failed after %d attempts", maxRetries)
-	return fmt.Errorf("batch update failed after retries")
+	_, err = tx.ExecContext(ctx, finalQuery, args...)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	_ = tx.Commit()
+
+	return nil
 }
